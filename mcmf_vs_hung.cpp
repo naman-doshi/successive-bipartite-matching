@@ -1,15 +1,15 @@
 // #pragma GCC optimize("O3,unroll-loops")
- 
-#include <bits/extc++.h>
+
+#include <bits/stdc++.h>
 #include <random>
- 
+
 using namespace std;
-using namespace __gnu_pbds;
  
 // #pragma GCC target("avx2,bmi,bmi2,lzcnt,popcnt")
 // #define INTERACTIVE 
  
-__gnu_cxx::sfmt19937 mt((uint32_t) chrono::steady_clock::now().time_since_epoch().count());
+// portable random engine instead of GNU sfmt19937
+static std::mt19937_64 mt((uint64_t) chrono::steady_clock::now().time_since_epoch().count());
  
 template<typename T>
 class vt : public std::vector<T> {
@@ -78,9 +78,9 @@ using vvt = vt<vt<T>>;
 template <class T>
 using vvvt = vt<vvt<T>>;
 template <class T>
-using vvvvt = vector<vvvt<T>>;
+using vvvvt = vt<vvvt<T>>;
 template <class T>
-using vvvvvt = vector<vvvvt<T>>;
+using vvvvvt = vt<vvvvt<T>>;
  
 #define vv(type, name, h, ...) \
     vvt<type> name(h, vt<type>(__VA_ARGS__))
@@ -132,9 +132,11 @@ struct chash { // large odd number for C
     ll operator()(ll x) const { return __builtin_bswap64((x ^ RANDOM) * C); }
 };
  
-#define gptable gp_hash_table
-template<class K, class V, class hash> gptable<K, V, hash> make_gptable() {
-    return gptable<K, V, hash>({}, {}, {}, {}, {1 << 16});
+// minimal stand-in for gp_hash_table using unordered_map
+template<class K, class V, class Hash = std::hash<K>>
+using gptable = std::unordered_map<K, V, Hash>;
+template<class K, class V, class Hash = std::hash<K>> gptable<K, V, Hash> make_gptable() {
+    return gptable<K, V, Hash>();
 }
  
 #define PP_GET_MACRO(_0,_1,_2,_3,_4,_5,_6,_7,_8, NAME, ...) NAME
@@ -274,7 +276,7 @@ struct is_iterable : false_type {};
 template<class T>
 struct is_iterable<T, void_t<decltype(begin(declval<T>())), decltype(end(declval<T>()))>>
     : bool_constant<!is_same_v<T, string>> {};
- 
+
 // Ranges
 template<class T>
 enable_if_t<is_iterable<T>::value, ostream&>
@@ -421,10 +423,13 @@ template<typename... Args>
 inline void read(tuple<Args...> &t) { apply([&](auto&... xs){ (read(xs), ...); }, t); }
  
 template<class T>
-enable_if_t< is_iterable<T>::value
-          && (!std::is_same_v<typename T::value_type, bool>) >
-inline read(T& v) { for (auto &e : v) read(e); }
- 
+inline auto read(T& v)
+    -> enable_if_t< is_iterable<T>::value
+                 && (!std::is_same_v<typename T::value_type, bool>) > {
+    for (auto &e : v) read(e);
+}
+
+// For containers of bool (e.g., vector<bool>)
 template<class C>
 inline auto read(C& v)
     -> enable_if_t< is_same_v<typename C::value_type, bool> > {
@@ -585,8 +590,8 @@ void printer(string pfx, const char *names, T&& head, V&& ...tail) {
  
 #define dbg(...) printer(to_string(__LINE__) + ": ", #__VA_ARGS__, __VA_ARGS__)
 #else
-#define dbg(x...)
-#define cerr if (0) std::cerr
+#define dbg(...) ((void)0)
+#define cerr if (false) std::cerr
 #endif
  
 /*
@@ -621,8 +626,10 @@ struct MCMF {
         fill(all(dist), INF);
         dist[s] = 0; db di;
 
-        __gnu_pbds::priority_queue<pair<db, int>> q;
-        vt<decltype(q)::point_iterator> its(N);
+        // use standard priority_queue instead of GNU pbds
+        using Node = pair<db, int>;
+        priority_queue<Node, vector<Node>, greater<Node>> q;
+        vt<char> in_q(N, 0);
         q.push({ 0, s });
 
         while (!q.empty()) {
@@ -633,10 +640,7 @@ struct MCMF {
                 if (e.cap - e.flow > 0 && val < dist[e.to]) {
                     dist[e.to] = val;
                     par[e.to] = &e;
-                    if (its[e.to] == q.end())
-                        its[e.to] = q.push({ -dist[e.to], e.to });
-                    else
-                        q.modify(its[e.to], { -dist[e.to], e.to });
+                    q.push({ dist[e.to], e.to });
                 }
             }
         }
@@ -732,35 +736,38 @@ static db repeated_hungarian_max(const vt<vt<db>>& w, int k) {
 signed main() {
     IO::init();
  
-    const int n = 20, k = 5;
+    const int n = 10;
     auto next_double = [&] () { 
         return uniform_real_distribution<db>(0, 1)(mt); 
     };
-    const int reps = 1000;
-    db tot_mcmf = 0, tot_hung = 0;
-    FOR (reps) {
-        vt<vt<db>> mat(n, vt<db>(n));
-        FOR (i, n) FOR (j, n) mat[i][j] = -next_double();
-        // positive weights for baselines
-        vt<vt<db>> w(n, vt<db>(n));
-        FOR (i, n) FOR (j, n) w[i][j] = -mat[i][j];
-
-        int s = 2 * n, t = 2 * n + 1;
-        MCMF mcmf(2 * n + 2);
-        FOR (i, n) {
-            mcmf.ae(s, i, k, 0);
-            mcmf.ae(i + n, t, k, 0);
+    const int reps = 10000;
+    FOR (k, 1, n+1) {
+        db tot_mcmf = 0, tot_hung = 0;
+        FOR (reps) {
+            vt<vt<db>> mat(n, vt<db>(n));
+            FOR (i, n) FOR (j, n) mat[i][j] = -next_double();
+            // positive weights for baselines
+            vt<vt<db>> w(n, vt<db>(n));
+            FOR (i, n) FOR (j, n) w[i][j] = -mat[i][j];
+    
+            int s = 2 * n, t = 2 * n + 1;
+            MCMF mcmf(2 * n + 2);
+            FOR (i, n) {
+                mcmf.ae(s, i, k, 0);
+                mcmf.ae(i + n, t, k, 0);
+            }
+            FOR (i, n) FOR (j, n) {
+                mcmf.ae(i, j + n, 1, mat[i][j]);
+            }
+            mcmf.setpi(s);
+            auto [flow, cost] = mcmf.maxflow(s, t);
+            dbg(flow, cost);
+            assert(flow == n * k);
+            tot_mcmf += -cost;
+    
+            // Baselines
+            tot_hung += repeated_hungarian_max(w, k);
         }
-        FOR (i, n) FOR (j, n) {
-            mcmf.ae(i, j + n, 1, mat[i][j]);
-        }
-        auto [flow, cost] = mcmf.maxflow(s, t);
-        dbg(flow, cost);
-        assert(flow == n * k);
-        tot_mcmf += -cost;
-
-        // Baselines
-        tot_hung += repeated_hungarian_max(w, k);
+        println(tot_mcmf / reps, tot_hung / reps);
     }
-    println(tot_mcmf / reps, tot_hung / reps);
 }
